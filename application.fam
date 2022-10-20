@@ -1,0 +1,17 @@
+# qv. https://github.com/flipperdevices/flipperzero-firmware/blob/dev/documentation/AppManifests.md
+
+App(
+    appid="badbt",
+    name="BadBT",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="hello_world_app",
+    cdefines=["APP_BAD_BT"],
+    requires=[
+        "bt",
+        "gui",
+    ],
+    stack_size=1 * 1024,
+    order=20,
+    fap_icon="badbt_icon.png",
+    fap_category="Tools",
+)
