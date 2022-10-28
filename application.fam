@@ -4,7 +4,7 @@ App(
     appid="badbt",
     name="BadBT",
     apptype=FlipperAppType.EXTERNAL,
-    entry_point="hello_world_app",
+    entry_point="badbt_app",
     cdefines=["APP_BAD_BT"],
     requires=[
         "bt",

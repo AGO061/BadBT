@@ -1,125 +1,116 @@
-#include <furi.h>
-#include <gui/gui.h>
 #include <input/input.h>
-#include <stdlib.h>
+#include <furi.h>
+#include <furi_hal.h>
+#include <furi_hal_bt_hid.h>
+#include "badbt.h"
 
-typedef struct {
-    int x;
-    int y;
-    int move_x, move_y;
-} HelloWorldModel;
+uint8_t screen=0;
 
-typedef struct {
-    HelloWorldModel* model;
-    FuriMutex* model_mutex;
-
-    FuriMessageQueue* event_queue;
-
-    ViewPort* view_port;
-    Gui* gui;
-} HelloWorld;
-
-void draw_callback(Canvas* canvas, void* ctx) {
-    HelloWorld* hello_world = ctx;
-    furi_check(furi_mutex_acquire(hello_world->model_mutex, FuriWaitForever) == FuriStatusOk);
-
-    //canvas_draw_box(canvas, hello_world->model->x, hello_world->model->y, 4, 4);
-    canvas_draw_frame(canvas, 0, 0, 128, 64);
-    canvas_draw_str(canvas, hello_world->model->x, hello_world->model->y, "Hello World!");
-
-    furi_mutex_release(hello_world->model_mutex);
+void badbt_draw_callback(Canvas* canvas, void* ctx) {
+    UNUSED(ctx);
+    canvas_clear(canvas);
+    if (screen==0){
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str(canvas, 2, 10, "BadBT");
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 2, 22, "Waiting for connection...");
+    } else if (screen==1){
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str(canvas, 2, 10, "BadBT");
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 2, 22, "BLUETOOTH CONNECTED!");
+    }
 }
 
-void input_callback(InputEvent* input, void* ctx) {
-    HelloWorld* hello_world = ctx;
-    // Puts input onto event queue with priority 0, and waits until completion.
-    furi_message_queue_put(hello_world->event_queue, input, FuriWaitForever);
+void badbt_input_callback(InputEvent* input_event, void* ctx) {
+    furi_assert(ctx);
+    FuriMessageQueue* event_queue = ctx;
+    furi_message_queue_put(event_queue, input_event, FuriWaitForever);
 }
 
-HelloWorld* hello_world_alloc() {
-    HelloWorld* instance = malloc(sizeof(HelloWorld));
 
-    instance->model = malloc(sizeof(HelloWorldModel));
-    instance->model->x = rand() % 128;
-    instance->model->y = rand() % 64;
-    instance->model->move_x = 2;
-    instance->model->move_y = 2;
-
-    instance->model_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
-
-    instance->event_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
-
-    instance->view_port = view_port_alloc();
-    view_port_draw_callback_set(instance->view_port, draw_callback, instance);
-    view_port_input_callback_set(instance->view_port, input_callback, instance);
-
-    instance->gui = furi_record_open("gui");
-    gui_add_view_port(instance->gui, instance->view_port, GuiLayerFullscreen);
-
-    return instance;
+void bt_hid_connection_status_changed_callback(BtStatus status, void* context) {
+    furi_assert(context);
+    
+    BtHid* app=context;
+    app->connected = (status == BtStatusConnected);
+    if(app->connected) {
+        screen=1;
+        notification_internal_message(app->notifications, &sequence_set_blue_255);
+    } else {
+        screen=0;
+        notification_internal_message(app->notifications, &sequence_reset_blue);
+    }
 }
 
-void hello_world_free(HelloWorld* instance) {
-    view_port_enabled_set(instance->view_port, false); // Disabsles our ViewPort
-    gui_remove_view_port(instance->gui, instance->view_port); // Removes our ViewPort from the Gui
-    furi_record_close("gui"); // Closes the gui record
-    view_port_free(instance->view_port); // Frees memory allocated by view_port_alloc
-    furi_message_queue_free(instance->event_queue);
 
-    furi_mutex_free(instance->model_mutex);
 
-    free(instance->model);
-    free(instance);
-}
 
-int32_t hello_world_app(void* p) {
+
+
+int32_t badbt_app(void* p) {
     UNUSED(p);
+    FuriMessageQueue* event_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
 
-    HelloWorld* hello_world = hello_world_alloc();
+    // Configure view port
+    ViewPort* view_port = view_port_alloc();
+    view_port_draw_callback_set(view_port, badbt_draw_callback, NULL);
+    view_port_input_callback_set(view_port, badbt_input_callback, event_queue);
+    BtHid* app = malloc(sizeof(BtHid));
+
+    // Gui
+    app->gui = furi_record_open(RECORD_GUI);
+
+    // Bt
+    app->bt = furi_record_open(RECORD_BT);
+
+    // Notifications
+    app->notifications = furi_record_open(RECORD_NOTIFICATION);
+
+    app->connected=false;
+    // Register view port in GUI
+    gui_add_view_port(app->gui, view_port, GuiLayerFullscreen);
+    
 
     InputEvent event;
-    for(bool processing = true; processing;) {
-        // Pops a message off the queue and stores it in `event`.
-        // No message priority denoted by NULL, and 100 ticks of timeout.
-        FuriStatus status = furi_message_queue_get(hello_world->event_queue, &event, 100);
-        furi_check(furi_mutex_acquire(hello_world->model_mutex, FuriWaitForever) == FuriStatusOk);
-        if(status == FuriStatusOk) {
+
+    while(furi_message_queue_get(event_queue, &event, FuriWaitForever) == FuriStatusOk) {
+        if(event.type == InputTypeShort && event.key == InputKeyBack) {
+            //Exiting application
+            notification_message(app->notifications, &sequence_reset_vibro);
+            notification_message(app->notifications, &sequence_reset_green);
+            break;
+        }
+        /*if(event.key == InputKeyOk) {
             if(event.type == InputTypePress) {
-                switch(event.key) {
-                case InputKeyUp:
-                    hello_world->model->move_y -= 2;
-                    break;
-                case InputKeyDown:
-                    hello_world->model->move_y += 2;
-                    break;
-                case InputKeyLeft:
-                    hello_world->model->move_x -= 2;
-                    break;
-                case InputKeyRight:
-                    hello_world->model->move_x += 2;
-                    break;
-                case InputKeyOk:
-                case InputKeyBack:
-                    processing = false;
-                    break;
-                }
+                //notification_message(notification, &sequence_set_vibro_on);
+                notification_message(app->notifications, &sequence_set_green_255);
+                
+
+                //screen sequences
+
+
+            } else if(event.type == InputTypeRelease) {
+                //notification_message(notification, &sequence_reset_vibro);
+                notification_message(app->notifications, &sequence_reset_green);
             }
+        }*/
+        if (screen==0){
+            bt_set_status_changed_callback(app->bt, bt_hid_connection_status_changed_callback, app->notifications);
         }
-
-        if(((hello_world->model->x + hello_world->model->move_x) > 127) ||
-           ((hello_world->model->x + hello_world->model->move_x) < 1)) {
-            hello_world->model->move_x = (hello_world->model->move_x) * -1;
-        }
-        hello_world->model->x += hello_world->model->move_x;
-
-        if(((hello_world->model->y + hello_world->model->move_y) > 63) ||
-           ((hello_world->model->y + hello_world->model->move_y) < 1)) {
-            hello_world->model->move_y = (hello_world->model->move_y) * -1;
-        }
-        hello_world->model->y += hello_world->model->move_y;
-        furi_mutex_release(hello_world->model_mutex);
-        view_port_update(hello_world->view_port); // signals our draw callback
     }
-    hello_world_free(hello_world);
+
+    gui_remove_view_port(app->gui, view_port);
+    view_port_free(view_port);
+    furi_message_queue_free(event_queue);
+    // Close records
+    furi_record_close(RECORD_GUI);
+    app->gui = NULL;
+    furi_record_close(RECORD_NOTIFICATION);
+    app->notifications = NULL;
+    furi_record_close(RECORD_BT);
+    app->bt = NULL;
+    free(app);
     return 0;
 }
+
